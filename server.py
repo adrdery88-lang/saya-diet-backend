@@ -12,12 +12,11 @@ CORS(app)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 genai.configure(api_key=GEMINI_API_KEY)
 
-# استخدام نموذج Gemini 1.5 Flash للسرعة ودقة تحليل الصور
+# استخدام نموذج Gemini 1.5 Flash للسرعة وتحليل الصور بدقة
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-# 1. دعم مسار الفحص الأساسي والجذري لتجنب أخطاء 404
 @app.route('/', methods=['GET'])
-def health_check_root():
+def home():
     return jsonify({
         "status": "ok",
         "service": "Saya Diet AI Vision Backend",
@@ -25,25 +24,20 @@ def health_check_root():
     }), 200
 
 @app.route('/healthz', methods=['GET'])
-def health_check_path():
+def healthz():
     return jsonify({
         "status": "ok",
         "version": "2.0.0"
     }), 200
 
-# 2. مسار التحليل المتوافق مع الـ APK
 @app.route('/api/v1/analyze-meal', methods=['POST'])
 def analyze_meal():
     try:
-        # التحقق الاختياري من رمز الوصول (Token) إذا أرسله الـ APK في الهيدر لكي لا يرجع 401
-        auth_header = request.headers.get('Authorization')
-        # (يمكنك إضافة التحقق الفعلي هنا إن رغبت، أو السماح بالمرور لتسهيل الاختبار)
-
         data = request.get_json()
         if not data:
             return jsonify({"success": False, "error": "البيانات المرسلة فارغة"}), 400
             
-        # دعم استقبال الصورة بأكثر من مفتاح يرسله التطبيق
+        # دعم استقبال الصورة بالحقلين معا لتجنب أي اختلاف مع الـ APK
         img_data = data.get('image') or data.get('image_base64')
         if not img_data:
             return jsonify({"success": False, "error": "يرجى إرسال الصورة بالحقل image أو image_base64"}), 400
@@ -51,7 +45,6 @@ def analyze_meal():
         user_goal = data.get("user_goal", "إنقاص الوزن")
         target_calories = data.get("target_calories", 1800)
 
-        # تنظيف بيانات الـ base64 إذا كان مضافاً إليها رأس البيانات
         if ',' in img_data:
             img_data = img_data.split(',')[1]
 
@@ -105,5 +98,6 @@ def analyze_meal():
         }), 500
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 10000))
+    print(f"Saya Diet analysis endpoint listening on 0.0.0.0:{port}")
     app.run(host='0.0.0.0', port=port)
