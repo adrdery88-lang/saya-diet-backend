@@ -15,23 +15,35 @@ genai.configure(api_key=GEMINI_API_KEY)
 # استخدام نموذج Gemini 1.5 Flash للسرعة ودقة تحليل الصور
 model = genai.GenerativeModel('gemini-1.5-flash')
 
+# 1. دعم مسار الفحص الأساسي والجذري لتجنب أخطاء 404
 @app.route('/', methods=['GET'])
-def health_check():
+def health_check_root():
     return jsonify({
-        "status": "online",
+        "status": "ok",
         "service": "Saya Diet AI Vision Backend",
         "version": "2.0.0"
     }), 200
 
+@app.route('/healthz', methods=['GET'])
+def health_check_path():
+    return jsonify({
+        "status": "ok",
+        "version": "2.0.0"
+    }), 200
+
+# 2. مسار التحليل المتوافق مع الـ APK
 @app.route('/api/v1/analyze-meal', methods=['POST'])
 def analyze_meal():
     try:
+        # التحقق الاختياري من رمز الوصول (Token) إذا أرسله الـ APK في الهيدر لكي لا يرجع 401
+        auth_header = request.headers.get('Authorization')
+        # (يمكنك إضافة التحقق الفعلي هنا إن رغبت، أو السماح بالمرور لتسهيل الاختبار)
+
         data = request.get_json()
-        
         if not data:
             return jsonify({"success": False, "error": "البيانات المرسلة فارغة"}), 400
             
-        # دعم استقبال الصورة بأكثر من مفتاح قد يرسله التطبيق
+        # دعم استقبال الصورة بأكثر من مفتاح يرسله التطبيق
         img_data = data.get('image') or data.get('image_base64')
         if not img_data:
             return jsonify({"success": False, "error": "يرجى إرسال الصورة بالحقل image أو image_base64"}), 400
@@ -39,7 +51,7 @@ def analyze_meal():
         user_goal = data.get("user_goal", "إنقاص الوزن")
         target_calories = data.get("target_calories", 1800)
 
-        # تنظيف بيانات الـ base64 إذا كان مضافاً إليها رأس البيانات (مثل data:image/jpeg;base64,)
+        # تنظيف بيانات الـ base64 إذا كان مضافاً إليها رأس البيانات
         if ',' in img_data:
             img_data = img_data.split(',')[1]
 
@@ -81,7 +93,6 @@ def analyze_meal():
             {'mime_type': 'image/jpeg', 'data': image_bytes}
         ])
 
-        # تنظيف رد الـ AI واستخراج كود الـ JSON فقط
         raw_text = response.text.replace('```json', '').replace('```', '').strip()
         result_json = json.loads(raw_text)
 
