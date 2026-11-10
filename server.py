@@ -6,13 +6,13 @@ from flask_cors import CORS
 import google.generativeai as genai
 
 app = Flask(__name__)
-CORS(app)  # للسماح بالتواصل من تطبيق الموبايل / Flutter
+CORS(app)
 
-# ضبط مفتاح API الخاص بـ Gemini من بيئة التشغيل
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "ضع_مفتاحك_هنا_إن_لم_تستخدم_المتغيرات")
+# ضبط مفتاح Gemini API من متغيرات البيئة في Render
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 genai.configure(api_key=GEMINI_API_KEY)
 
-# استخدام نموذج Gemini Vision
+# استخدام نموذج Gemini 1.5 Flash للسرعة ودقة تحليل الصور
 model = genai.GenerativeModel('gemini-1.5-flash')
 
 @app.route('/', methods=['GET'])
@@ -20,7 +20,7 @@ def health_check():
     return jsonify({
         "status": "online",
         "service": "Saya Diet AI Vision Backend",
-        "version": "1.0.0"
+        "version": "2.0.0"
     }), 200
 
 @app.route('/api/v1/analyze-meal', methods=['POST'])
@@ -28,38 +28,51 @@ def analyze_meal():
     try:
         data = request.get_json()
         
-        if not data or 'image_base64' not in data:
-            return jsonify({"error": "يرجى إرسال الصورة بصيغة image_base64"}), 400
+        if not data:
+            return jsonify({"success": False, "error": "البيانات المرسلة فارغة"}), 400
             
-        user_goal = data.get("user_goal", "إنقاص الوزن")  # "زيادة وزن"، "إنقاص وزن"، "ثبات"
-        target_calories = data.get("target_calories", 2000)
+        # دعم استقبال الصورة بأكثر من مفتاح قد يرسله التطبيق
+        img_data = data.get('image') or data.get('image_base64')
+        if not img_data:
+            return jsonify({"success": False, "error": "يرجى إرسال الصورة بالحقل image أو image_base64"}), 400
 
-        # فك تشفير الصورة
-        image_bytes = base64.b64decode(data['image_base64'])
+        user_goal = data.get("user_goal", "إنقاص الوزن")
+        target_calories = data.get("target_calories", 1800)
+
+        # تنظيف بيانات الـ base64 إذا كان مضافاً إليها رأس البيانات (مثل data:image/jpeg;base64,)
+        if ',' in img_data:
+            img_data = img_data.split(',')[1]
+
+        image_bytes = base64.b64decode(img_data)
 
         prompt = f"""
-        قم بتحليل صورة الطعام التالية بدقة بالغة باللغة العربية لتطبيق (صايا دايت).
-        إذا كانت الصورة تحتوي على عنصر واحد (مثل موزة أو تفاحة)، حدد الحجم واللون والنضج.
-        إذا كانت وجبة مكتملة (مثل كبسة، سلطة، ستيك)، قم بتفكيك المكونات وحساب حجم كل صنف.
-
+        قم بتحليل صورة الوجبة أو الأطعمة التالية بدقة بالغة لتطبيق التغذية (صايا دايت).
         هدف المستخدم: {user_goal}
-        السعرات اليومية المستهدفة: {target_calories}
+        السعرات المستهدفة: {target_calories}
 
-        أرجع النتيجة حصراً بصيغة JSON بالهيكل التالي بدون أي مقدمات أو شروحات خارج الـ JSON:
+        قم بتفكيك عناصر الوجبة الظاهرة في الصورة إلى قائمة أصناف دقيقة.
+        أرجع النتيجة حصراً بصيغة JSON صحيحة ومتوافقة تماماً مع الهيكل التالي دون أي نصوص أو شروحات إضافية خارجه:
         {{
-          "itemName": "اسم الوجبة أو العنصر الرئيسي",
-          "estimatedWeightGrams": 150,
-          "calories": 210,
-          "proteinGrams": 5.0,
-          "carbsGrams": 30.0,
-          "fatGrams": 2.5,
-          "fiberGrams": 3.0,
-          "vitamins": ["فيتامين C", "بوتاسيوم"],
-          "ingredients": [
-            {{"name": "مكون 1", "portion": "حبة متوسطة", "calories": 100}}
+          "success": true,
+          "message": "تم تحليل الوجبة بنجاح",
+          "total_calories": 450,
+          "total_protein": 25.5,
+          "total_carbs": 45.0,
+          "total_fat": 12.0,
+          "total_fiber": 6.0,
+          "items": [
+            {{
+              "item_name": "اسم الصنف الأول بالعربي",
+              "portion": "حبة متوسطة أو كوب",
+              "weight_grams": 150,
+              "calories": 250,
+              "protein_grams": 15.0,
+              "carbs_grams": 30.0,
+              "fat_grams": 5.0,
+              "fiber_grams": 4.0
+            }}
           ],
-          "advice": "نصيحة غذائية مخصصة بناءً على هدف المستخدم",
-          "portionStatus": "مناسبة"
+          "advice": "نصيحة غذائية قصيرة ومفيدة تناسب هدف المستخدم"
         }}
         """
 
@@ -68,14 +81,11 @@ def analyze_meal():
             {'mime_type': 'image/jpeg', 'data': image_bytes}
         ])
 
-        # تنظيف وتنسيق نص الاستجابة لاستخراج الـ JSON
+        # تنظيف رد الـ AI واستخراج كود الـ JSON فقط
         raw_text = response.text.replace('```json', '').replace('```', '').strip()
         result_json = json.loads(raw_text)
 
-        return jsonify({
-            "success": True,
-            "data": result_json
-        }), 200
+        return jsonify(result_json), 200
 
     except Exception as e:
         return jsonify({
@@ -84,6 +94,5 @@ def analyze_meal():
         }), 500
 
 if __name__ == '__main__':
-    # تشغيل الخادم على المنفذ 5000
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=port)
