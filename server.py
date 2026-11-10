@@ -8,11 +8,11 @@ import google.generativeai as genai
 app = Flask(__name__)
 CORS(app)
 
-# ضبط مفتاح Gemini API من متغيرات البيئة في Render
+# ضبط مفتاح Gemini API
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 genai.configure(api_key=GEMINI_API_KEY)
 
-# استخدام نموذج Gemini 1.5 Flash للسرعة وتحليل الصور بدقة
+# نموذج Gemini 1.5 Flash للتحليل السريع
 model = genai.GenerativeModel('gemini-1.5-flash')
 
 @app.route('/', methods=['GET'])
@@ -33,11 +33,21 @@ def healthz():
 @app.route('/api/v1/analyze-meal', methods=['POST'])
 def analyze_meal():
     try:
+        # التحقق من رمز الوصول (Token) إذا كان الـ APK يرسله في الهيدر
+        auth_header = request.headers.get('Authorization', '')
+        expected_token = os.environ.get("SAYA_ACCESS_TOKEN", "")
+        
+        # إذا تم ضبط رمز في البيئة وكان الهيدر لا يطابقه (اختياري للتأمين)
+        if expected_token and auth_header:
+            token_value = auth_header.replace('Bearer ', '').strip()
+            if token_value != expected_token:
+                return jsonify({"success": False, "error": "رمز الوصول غير صحيح (Unauthorized)"}), 401
+
         data = request.get_json()
         if not data:
             return jsonify({"success": False, "error": "البيانات المرسلة فارغة"}), 400
             
-        # دعم استقبال الصورة بالحقلين معا لتجنب أي اختلاف مع الـ APK
+        # دعم استقبال الصورة بالحقلين معا لضمان التوافق التام مع الـ APK
         img_data = data.get('image') or data.get('image_base64')
         if not img_data:
             return jsonify({"success": False, "error": "يرجى إرسال الصورة بالحقل image أو image_base64"}), 400
