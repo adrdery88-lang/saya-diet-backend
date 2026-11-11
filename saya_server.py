@@ -11,7 +11,7 @@ import socket
 import struct
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 MAX_BODY = 6 * 1024 * 1024
@@ -187,16 +187,28 @@ def handler(api_key, model, access_token):
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
                     if not 0 < length <= MAX_BODY:
+                        print("Saya scan: invalid request size (413)", flush=True)
                         self.reply(413, {"error": "invalid_size"})
                         return
                     image, mode = request_image(json.loads(self.rfile.read(length)), allow_v1=v1)
                 except (ValueError, binascii.Error, TimeoutError):
+                    print("Saya scan: invalid image or request (400)", flush=True)
                     self.reply(400, {"error": "invalid_image"})
                     return
                 try:
                     mime = "image/jpeg" if image.startswith("/9j/") else "image/png"
                     result = analyze(image, mode, model, api_key, mime)
-                except (URLError, ValueError, TypeError, KeyError, IndexError, TimeoutError):
+                except HTTPError as error:
+                    print(f"Saya scan: Gemini returned HTTP {error.code} (model={model})", flush=True)
+                    error.close()
+                    self.reply(502, {"error": "analysis_unavailable"})
+                    return
+                except (URLError, TimeoutError) as error:
+                    print(f"Saya scan: Gemini connection failed ({type(error).__name__})", flush=True)
+                    self.reply(502, {"error": "analysis_unavailable"})
+                    return
+                except (ValueError, TypeError, KeyError, IndexError, AttributeError) as error:
+                    print(f"Saya scan: invalid Gemini response ({type(error).__name__})", flush=True)
                     self.reply(502, {"error": "analysis_unavailable"})
                     return
                 self.reply(200, v1_result(result) if v1 else result)
