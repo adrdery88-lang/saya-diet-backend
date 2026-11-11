@@ -10,6 +10,7 @@ import re
 import socket
 import struct
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -100,17 +101,33 @@ def analyze(image, mode, model, api_key, mime="image/png"):
         "Do not return per-100-gram values unless the portion is 100 grams. Use Arabic and English names. "
         "Avoid double-counting a whole dish and its components. Do not give health advice."
     )
+    config = {"responseMimeType": "application/json", "responseJsonSchema": SCHEMA}
+    if model in ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"):
+        config["thinkingConfig"] = {"thinkingLevel": "LOW"}
+    elif model == "gemini-3.5-flash-lite":
+        config["thinkingConfig"] = {"thinkingLevel": "MINIMAL"}
     request = Request(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         data=json.dumps({
             "contents": [{"parts": [{"text": prompt}, {"inlineData": {"mimeType": mime, "data": image}}]}],
-            "generationConfig": {"responseMimeType": "application/json", "responseJsonSchema": SCHEMA},
+            "generationConfig": config,
         }).encode(),
         headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         method="POST",
     )
-    with urlopen(request, timeout=35) as response:
-        raw = response.read(256 * 1024 + 1)
+    started = time.monotonic()
+    try:
+        with urlopen(request, timeout=43) as response:
+            raw = response.read(256 * 1024 + 1)
+    except HTTPError as error:
+        remaining = 47 - (time.monotonic() - started)
+        if error.code != 503 or remaining < 5:
+            raise
+        error.close()
+        print(f"Saya scan: Gemini returned HTTP 503, retrying once (model={model})", flush=True)
+        time.sleep(1)
+        with urlopen(request, timeout=min(22, remaining - 1)) as response:
+            raw = response.read(256 * 1024 + 1)
     if len(raw) > 256 * 1024:
         raise ValueError("Provider response too large")
     envelope = json.loads(raw)
@@ -195,6 +212,7 @@ def handler(api_key, model, access_token):
                     print("Saya scan: invalid image or request (400)", flush=True)
                     self.reply(400, {"error": "invalid_image"})
                     return
+                started = time.monotonic()
                 try:
                     mime = "image/jpeg" if image.startswith("/9j/") else "image/png"
                     result = analyze(image, mode, model, api_key, mime)
@@ -204,7 +222,12 @@ def handler(api_key, model, access_token):
                     self.reply(502, {"error": "analysis_unavailable"})
                     return
                 except (URLError, TimeoutError) as error:
-                    print(f"Saya scan: Gemini connection failed ({type(error).__name__})", flush=True)
+                    elapsed = time.monotonic() - started
+                    print(
+                        f"Saya scan: Gemini connection failed ({type(error).__name__}, "
+                        f"model={model}, elapsed={elapsed:.1f}s)",
+                        flush=True,
+                    )
                     self.reply(502, {"error": "analysis_unavailable"})
                     return
                 except (ValueError, TypeError, KeyError, IndexError, AttributeError) as error:
